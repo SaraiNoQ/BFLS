@@ -115,10 +115,10 @@ def main(n_clients):
     for cl in np.unique(coarse_labels):
         mask = (coarse_labels == cl)
         plt.scatter(model_features[mask, 0], model_features[mask, 1],
-                    label=f'粗分簇 {cl}', alpha=0.6)
-    plt.title("谱聚类后的结果\n(3个粗分簇)")
-    plt.xlabel("特征维度 1")
-    plt.ylabel("特征维度 2")
+                    label=f'Coarse cluster {cl}', alpha=0.6)
+    plt.title("After Spectral Clustering\n(3 Coarse Clusters)")
+    plt.xlabel("Feature Dimension 1")
+    plt.ylabel("Feature Dimension 2")
     plt.legend()
 
     # DBSCAN细分结果
@@ -130,12 +130,12 @@ def main(n_clients):
         mask = (final_labels == label)
         plt.scatter(model_features[mask, 0], model_features[mask, 1],
                     color=colors[i],
-                    label=f'细分簇 {i}' if label != -1 else '噪声',
+                    label=f'Sub-Cluster {i}' if label != -1 else 'Noise',
                     alpha=0.6)
 
-    plt.title("DBSCAN细分后的结果\n(颜色=子簇)")
-    plt.xlabel("特征维度 1")
-    plt.ylabel("特征维度 2")
+    plt.title("After DBSCAN Refinement\n(Color=Sub-Clusters)")
+    plt.xlabel("Feature Dimension 1")
+    plt.ylabel("Feature Dimension 2")
     plt.legend()
 
     plt.tight_layout()

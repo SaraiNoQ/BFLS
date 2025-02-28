@@ -1,0 +1,26 @@
+# 聚类分析配置文件
+
+# 客户端数量
+n_clients: 500
+
+# 聚类参数（预留扩展）
+clustering:
+  # 特征维度
+  n_features: 5
+  # 随机种子
+  random_seed: 420
+  # 粗分簇数量
+  n_coarse_clusters: 3
+  
+# 网络延迟参数（预留扩展）
+delay:
+  # 三个簇的延迟参数
+  cluster1:
+    mean: 50
+    std: 10
+  cluster2:
+    mean: 150
+    std: 30
+  cluster3:
+    mean: 300
+    std: 50 
