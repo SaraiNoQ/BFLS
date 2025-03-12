@@ -8,7 +8,7 @@ clustering:
   # 特征维度
   n_features: 5
   # 随机种子
-  random_seed: 40
+  random_seed: 42000
   # 粗分簇数量
   n_coarse_clusters: 3
   

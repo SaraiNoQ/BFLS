@@ -6,6 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.datasets import make_blobs
 import argparse
 from sklearn.cluster import KMeans
+import time
 
 def get_config():
     """获取配置参数"""
@@ -66,44 +67,72 @@ def main(config):
     # ======================
     # 2. 谱聚类（使用JS散度）
     # ======================
-    def kl_divergence(p, q):
-        """计算KL散度，处理零值情况"""
-        # 添加小量防止log(0)
-        epsilon = 1e-10
-        p = np.clip(p, epsilon, 1)
-        q = np.clip(q, epsilon, 1)
-        return np.sum(p * np.log(p / q))
+    def preprocess_features(features):
+         """预处理特征向量"""
+         # 标准化到非负值
+         features_min = features.min(axis=1, keepdims=True)
+         features = features - features_min
+         
+         # L1归一化，确保和为1
+         features_sum = features.sum(axis=1, keepdims=True)
+         features_sum[features_sum == 0] = 1  # 防止除零
+         features = features / features_sum
+         
+         return features
     
-    def js_divergence(p, q):
-        """计算JS散度"""
-        # 确保输入是概率分布
-        p = p / np.sum(p)
-        q = q / np.sum(q)
-        m = 0.5 * (p + q)
-        return 0.5 * (kl_divergence(p, m) + kl_divergence(q, m))
+    def js_divergence_stable(p, q):
+         """计算稳定的JS散度"""
+         # 数值稳定性参数
+         epsilon = 1e-10
+         
+         # 确保非负和归一化
+         p = np.maximum(p, epsilon)
+         q = np.maximum(q, epsilon)
+         
+         # 计算中点分布
+         m = 0.5 * (p + q)
+         
+         # 使用稳定的KL散度计算
+         kl_pm = np.sum(p * (np.log(p + epsilon) - np.log(m + epsilon)))
+         kl_qm = np.sum(q * (np.log(q + epsilon) - np.log(m + epsilon)))
+         
+         # 返回JS散度
+         return 0.5 * (kl_pm + kl_qm)
     
+    start_time = time.time()
+
+    # 预处理特征矩阵
+    processed_features = preprocess_features(model_features)
+
     # 计算相似度矩阵
     n = len(model_features)
     similarity_matrix = np.zeros((n, n))
-    
+
+    # 计算特征的范围用于自适应sigma
+    feature_ranges = np.ptp(processed_features, axis=0)
+    adaptive_sigma = np.mean(feature_ranges) * 0.5  # 自适应核宽度
+
     # 对每对样本计算JS散度
     for i in range(n):
         for j in range(i, n):
             # 获取两个样本的特征
-            p = model_features[i]
-            q = model_features[j]
+            p = processed_features[i]
+            q = processed_features[j]
             
             # 计算JS散度
-            js_dist = js_divergence(p, q)
+            js_dist = js_divergence_stable(p, q)
             
             # 将JS散度转换为相似度（使用高斯核）
-            sigma = 1.0  # 可调整的参数
-            similarity = np.exp(-js_dist / (2 * sigma ** 2))
+            similarity = np.exp(-js_dist / (2 * adaptive_sigma ** 2))
             
             # 由于相似度矩阵是对称的
             similarity_matrix[i, j] = similarity
             similarity_matrix[j, i] = similarity
-    
+
+     # 归一化相似度矩阵
+    row_sums = similarity_matrix.sum(axis=1, keepdims=True)
+    similarity_matrix = similarity_matrix / row_sums
+
     # 确保相似度矩阵的数值稳定性
     similarity_matrix = np.nan_to_num(similarity_matrix, nan=0.0, posinf=1.0, neginf=0.0)
 
@@ -114,6 +143,9 @@ def main(config):
                                  assign_labels='discretize')  # 避免浮点精度问题
     coarse_labels = spectral.fit_predict(similarity_matrix)
 
+    cluster_time = time.time() - start_time
+    print(f"谱聚类 运算时间: {cluster_time:.4f} 秒")
+    
     # ======================
     # 3. DBSCAN细分（优化参数）
     # ======================
