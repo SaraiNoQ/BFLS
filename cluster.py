@@ -64,21 +64,55 @@ def main(config):
     ])
 
     # ======================
-    # 2. 谱聚类（鲁棒性改进）
+    # 2. 谱聚类（使用JS散度）
     # ======================
-    # 计算Pearson相关系数矩阵（处理NaN）
-    corr_matrix = np.corrcoef(model_features)
-
-    # 处理相关系数矩阵中的潜在问题
-    corr_matrix = np.nan_to_num(corr_matrix)  # 将NaN替换为0
-    corr_matrix = (corr_matrix + 1) / 2  # 映射到[0,1]范围
+    def kl_divergence(p, q):
+        """计算KL散度，处理零值情况"""
+        # 添加小量防止log(0)
+        epsilon = 1e-10
+        p = np.clip(p, epsilon, 1)
+        q = np.clip(q, epsilon, 1)
+        return np.sum(p * np.log(p / q))
+    
+    def js_divergence(p, q):
+        """计算JS散度"""
+        # 确保输入是概率分布
+        p = p / np.sum(p)
+        q = q / np.sum(q)
+        m = 0.5 * (p + q)
+        return 0.5 * (kl_divergence(p, m) + kl_divergence(q, m))
+    
+    # 计算相似度矩阵
+    n = len(model_features)
+    similarity_matrix = np.zeros((n, n))
+    
+    # 对每对样本计算JS散度
+    for i in range(n):
+        for j in range(i, n):
+            # 获取两个样本的特征
+            p = model_features[i]
+            q = model_features[j]
+            
+            # 计算JS散度
+            js_dist = js_divergence(p, q)
+            
+            # 将JS散度转换为相似度（使用高斯核）
+            sigma = 1.0  # 可调整的参数
+            similarity = np.exp(-js_dist / (2 * sigma ** 2))
+            
+            # 由于相似度矩阵是对称的
+            similarity_matrix[i, j] = similarity
+            similarity_matrix[j, i] = similarity
+    
+    # 确保相似度矩阵的数值稳定性
+    similarity_matrix = np.nan_to_num(similarity_matrix, nan=0.0, posinf=1.0, neginf=0.0)
 
     # 执行谱聚类（增加鲁棒性参数）
-    spectral = SpectralClustering(n_clusters=3,
-                                  affinity='precomputed',
-                                  random_state=config['clustering']['random_seed'],
-                                  assign_labels='discretize')  # 避免浮点精度问题
-    coarse_labels = spectral.fit_predict(corr_matrix)
+    spectral = SpectralClustering(n_clusters=config['clustering']['n_coarse_clusters'],
+                                 affinity='precomputed',
+                                 random_state=config['clustering']['random_seed'],
+                                 assign_labels='discretize')  # 避免浮点精度问题
+    coarse_labels = spectral.fit_predict(similarity_matrix)
 
     # ======================
     # 3. DBSCAN细分（优化参数）
