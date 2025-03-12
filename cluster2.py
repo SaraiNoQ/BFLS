@@ -5,6 +5,7 @@ from sklearn.cluster import SpectralClustering, DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.datasets import make_blobs
 import argparse
+from sklearn.cluster import KMeans
 
 
 def get_config():
@@ -77,7 +78,7 @@ def main(config):
     # 执行谱聚类（增加鲁棒性参数）
     spectral = SpectralClustering(n_clusters=3,
                                   affinity='precomputed',
-                                  random_state=42,
+                                  random_state=config['clustering']['random_seed'],
                                   assign_labels='discretize')  # 避免浮点精度问题
     coarse_labels = spectral.fit_predict(corr_matrix)
 
@@ -90,38 +91,78 @@ def main(config):
     for cluster_id in np.unique(coarse_labels):
         mask = (coarse_labels == cluster_id)
         delay_subset = network_delay[mask].reshape(-1, 1)
+        subset_size = len(delay_subset)
 
-        # 使用StandardScaler替代分位数缩放
+        print(f"\n处理粗分簇 {cluster_id}:")
+        print(f"用户数量: {subset_size}")
+
+        # 根据用户数量决定是否进行细分
+        if subset_size < 100:
+            print("用户数量少于100，不进行细分")
+            final_labels[mask] = current_max_label
+            current_max_label += 1
+            continue
+
+        # 计算需要细分的组数
+        n_subclusters = max(2, subset_size // 100)
+        print(f"用户数量为{subset_size}，将细分为{n_subclusters}组")
+
+        # 使用StandardScaler进行数据标准化
         scaler = StandardScaler()
         delay_scaled = scaler.fit_transform(delay_subset)
 
-        # 使用更合理的eps参数设置方法
-        distances = np.sort(delay_scaled, axis=0)
-        knee_point = np.diff(distances, axis=0)
-        eps = float(np.percentile(knee_point, 90))  # 使用90分位点作为eps
-
         # 增加特征维度：添加原始延迟值的差分作为第二维度
         delay_diff = np.diff(delay_subset, axis=0)
-        delay_diff = np.vstack([delay_diff, delay_diff[-1]])  # 补充最后一个差分值
+        delay_diff = np.vstack([delay_diff, delay_diff[-1]])
         delay_diff_scaled = scaler.fit_transform(delay_diff)
 
-        # 组合两个特征维度
+        # 组合特征
         combined_features = np.hstack([delay_scaled, delay_diff_scaled])
 
-        # 调整DBSCAN参数
-        min_samples = max(3, int(len(delay_subset) * 0.05))  # 动态设置min_samples
+        # 使用K-means进行预聚类，获取初始中心点
+
+        kmeans = KMeans(n_clusters=n_subclusters, random_state=config['clustering']['random_seed'])
+        kmeans_labels = kmeans.fit_predict(delay_scaled)
+
+        # 计算每个类的平均距离作为eps
+        eps_list = []
+        for i in range(n_subclusters):
+            cluster_points = combined_features[kmeans_labels == i]
+            if len(cluster_points) > 1:
+                # 计算类内平均距离
+                from scipy.spatial.distance import pdist
+                distances = pdist(cluster_points)
+                eps_list.append(np.mean(distances))
+
+        # 使用平均eps
+        eps = np.mean(eps_list) if eps_list else 0.5
+
+        # 设置DBSCAN参数
+        min_samples = max(3, min(20, int(np.log2(subset_size) * 2)))
+
+        print(f"DBSCAN参数: eps={eps:.4f}, min_samples={min_samples}")
+
+        # 执行DBSCAN聚类
         db = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean')
         sub_labels = db.fit_predict(combined_features)
 
-        # 标签合并
-        valid_clusters = (sub_labels != -1)
-        if np.any(valid_clusters):  # 只有当存在有效聚类时才更新标签
-            sub_labels[valid_clusters] += current_max_label
-            final_labels[mask] = sub_labels
-            current_max_label = np.max(final_labels) + 1
-        else:
-            final_labels[mask] = current_max_label
-            current_max_label += 1
+        # 处理聚类结果
+        unique_labels = np.unique(sub_labels)
+        n_clusters_found = len(unique_labels[unique_labels != -1])
+        n_noise = np.sum(sub_labels == -1)
+
+        print(f"实际获得的细分簇数量: {n_clusters_found}")
+        print(f"噪声点数量: {n_noise}")
+
+        # 如果没有找到足够的簇，使用K-means结果
+        if n_clusters_found < n_subclusters:
+            print(f"DBSCAN未能产生足够的簇，使用K-means结果")
+            sub_labels = kmeans_labels
+
+        # 更新标签
+        sub_labels[sub_labels != -1] += current_max_label
+        final_labels[mask] = sub_labels
+        current_max_label = np.max(final_labels) + 1
 
     # ======================
     # 4. 可视化（添加异常值提示）
@@ -256,7 +297,6 @@ def main(config):
         print(f"标准差: {delay_stats.std():.2f} ms")
         print(f"延迟范围: [{delay_stats.min():.2f}, {delay_stats.max():.2f}] ms")
 
-    print("testing: ", len(final_labels), np.unique(final_labels))
 
 if __name__ == "__main__":
     config = get_config()

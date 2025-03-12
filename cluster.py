@@ -118,13 +118,13 @@ def main(config):
             # 获取两个样本的特征
             p = processed_features[i]
             q = processed_features[j]
-            
+
             # 计算JS散度
             js_dist = js_divergence_stable(p, q)
-            
+
             # 将JS散度转换为相似度（使用高斯核）
             similarity = np.exp(-js_dist / (2 * adaptive_sigma ** 2))
-            
+
             # 由于相似度矩阵是对称的
             similarity_matrix[i, j] = similarity
             similarity_matrix[j, i] = similarity
